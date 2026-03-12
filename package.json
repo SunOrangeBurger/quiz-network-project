@@ -1,0 +1,20 @@
+{
+  "name": "quiz-network-project",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "server",
+    "client",
+    "loadtest"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
+    "start": "concurrently \"npm run start --workspace server\" \"npm run start --workspace client\"",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client",
+    "loadtest": "npm run start --workspace loadtest"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
