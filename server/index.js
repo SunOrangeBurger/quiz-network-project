@@ -4,8 +4,6 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const db = require("./db");
-const { createMetrics } = require("./metrics");
-const { createNetSim } = require("./net_sim");
 const { createRoutes } = require("./routes");
 const { createSocketServer } = require("./socket");
 
@@ -19,29 +17,19 @@ async function start() {
     }
   });
 
-  const metrics = createMetrics();
-  const netSim = createNetSim(metrics);
-
   app.use(cors());
   app.use(express.json());
 
   await db.initDb();
 
   const socketServer = createSocketServer(io, {
-    metrics,
-    netSim,
     jwtSecret: process.env.JWT_SECRET || "quiz-demo-secret",
-    adminPassword: process.env.ADMIN_PASSWORD || "admin123",
-    redisUrl: process.env.REDIS_URL
+    adminPassword: process.env.ADMIN_PASSWORD || "admin123"
   });
   await socketServer.init();
 
   app.use(
     createRoutes({
-      metrics,
-      getSocketsCount: () => socketServer.getSocketsCount(),
-      getLeaderboard: () => socketServer.getLeaderboard(),
-      getNetConfig: () => socketServer.getNetConfig(),
       adminPassword: process.env.ADMIN_PASSWORD || "admin123",
       jwtSecret: process.env.JWT_SECRET || "quiz-demo-secret"
     })
@@ -49,7 +37,7 @@ async function start() {
 
   const port = Number(process.env.PORT || 4000);
   server.listen(port, () => {
-    console.log(`Quiz network server listening on http://localhost:${port}`);
+    console.log(`Quiz server listening on http://localhost:${port}`);
   });
 }
 

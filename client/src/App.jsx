@@ -7,20 +7,9 @@ import Leaderboard from "./components/Leaderboard";
 import NetInspector from "./components/NetInspector";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:4000";
-const ACK_TIMEOUT_MS = 800;
 
 function randomId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function computeJitter(samples) {
-  if (samples.length < 2) {
-    return 0;
-  }
-  const avg = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-  const variance =
-    samples.reduce((sum, value) => sum + (value - avg) * (value - avg), 0) / samples.length;
-  return Math.sqrt(variance);
 }
 
 export default function App() {
@@ -31,117 +20,42 @@ export default function App() {
   const [question, setQuestion] = useState(null);
   const [messageLog, setMessageLog] = useState([]);
   const [events, setEvents] = useState([]);
-  const [seq, setSeq] = useState(1);
-  const [lastAckedSeq, setLastAckedSeq] = useState(0);
-  const [retransmits, setRetransmits] = useState(0);
+  const [submissionSeq, setSubmissionSeq] = useState(1);
   const [rttSamples, setRttSamples] = useState([]);
-  const [avgRtt, setAvgRtt] = useState(0);
-  const [jitter, setJitter] = useState(0);
-  const [packetLossEstimate, setPacketLossEstimate] = useState(0);
-  const [lastSeqReceived, setLastSeqReceived] = useState(0);
-  const [unackedSize, setUnackedSize] = useState(0);
+  const [latency, setLatency] = useState(0);
   const [adminToken, setAdminToken] = useState("");
-  const [serverMetrics, setServerMetrics] = useState(null);
   const socketRef = useRef(null);
-  const pingTimersRef = useRef(new Map());
-  const unackedRef = useRef(new Map());
+  const pingStartRef = useRef(0);
 
   function logLine(direction, payload) {
     setMessageLog((current) =>
-      [{ direction, payload, ts: new Date().toLocaleTimeString() }, ...current].slice(0, 30)
+      [{ direction, payload, ts: new Date().toLocaleTimeString() }, ...current].slice(0, 20)
     );
   }
 
-  function retransmit(sourceSeq) {
-    const socket = socketRef.current;
-    const record = unackedRef.current.get(sourceSeq);
-    if (!socket || !record) {
-      return;
-    }
-    record.attempts += 1;
-    record.timeoutId = window.setTimeout(() => retransmit(sourceSeq), ACK_TIMEOUT_MS);
-    unackedRef.current.set(sourceSeq, record);
-    setRetransmits((count) => count + 1);
-    setPacketLossEstimate((value) => Number((Math.min(1, value + 0.02)).toFixed(2)));
-    socket.emit("client_retransmit", { clientId, seq: sourceSeq });
-    socket.emit("client_message", record.payload);
-    logLine("retransmit", record.payload);
-    setUnackedSize(unackedRef.current.size);
-  }
-
-  function queueMessage(message, options = {}) {
+  function sendMessage(type, payload = {}) {
     const socket = socketRef.current;
     if (!socket) {
       return;
     }
-
-    // NETWORK: reliability logic
-    const outbound = { ...message, seq: message.seq ?? seq };
-    setSeq((current) => Math.max(current, outbound.seq + 1));
-    logLine("send", outbound);
-    socket.emit("client_message", outbound);
-
-    if (!options.requiresAck) {
-      return;
-    }
-
-    const record = {
-      payload: outbound,
-      attempts: 1
-    };
-    const timeoutId = window.setTimeout(() => retransmit(outbound.seq), ACK_TIMEOUT_MS);
-    record.timeoutId = timeoutId;
-    unackedRef.current.set(outbound.seq, record);
-    setUnackedSize(unackedRef.current.size);
-  }
-
-  function clearAck(sourceSeq) {
-    const record = unackedRef.current.get(sourceSeq);
-    if (!record) {
-      return;
-    }
-    window.clearTimeout(record.timeoutId);
-    unackedRef.current.delete(sourceSeq);
-    setUnackedSize(unackedRef.current.size);
-    setLastAckedSeq(sourceSeq);
-    setPacketLossEstimate((value) => Number(Math.max(0, value - 0.01).toFixed(2)));
+    const message = { type, clientId, ...payload };
+    logLine("send", message);
+    socket.emit("client_message", message);
   }
 
   useEffect(() => {
-    const socket = io(SERVER_URL, {
-      transports: ["websocket", "polling"]
-    });
+    const socket = io(SERVER_URL, { transports: ["websocket", "polling"] });
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      setEvents((current) => [`Connected to ${SERVER_URL}`, ...current].slice(0, 12));
+      setEvents((current) => [`Connected to ${SERVER_URL}`, ...current].slice(0, 10));
     });
 
     socket.on("server_message", (payload) => {
       logLine("recv", payload);
-      if (payload.seq_server) {
-        setLastSeqReceived(payload.seq_server);
-      }
 
-      if (payload.type === "ack") {
-        clearAck(payload.source_seq);
-        return;
-      }
-
-      if (payload.type === "server_pong") {
-        const startedAt = pingTimersRef.current.get(payload.seq);
-        if (startedAt) {
-          const rtt = Date.now() - startedAt;
-          pingTimersRef.current.delete(payload.seq);
-          setRttSamples((current) => {
-            const next = [...current, rtt].slice(-20);
-            const avg = next.reduce((sum, value) => sum + value, 0) / next.length;
-            setAvgRtt(Math.round(avg));
-            setJitter(Number(computeJitter(next).toFixed(2)));
-            return next;
-          });
-          socket.emit("client_rtt", { clientId, rttMs: rtt });
-        }
+      if (payload.type === "leaderboard") {
+        setLeaderboard(payload.entries || []);
         return;
       }
 
@@ -150,19 +64,21 @@ export default function App() {
         return;
       }
 
-      if (payload.type === "leaderboard") {
-        setLeaderboard(payload.entries || []);
+      if (payload.type === "server_pong" && pingStartRef.current) {
+        const nextRtt = Date.now() - pingStartRef.current;
+        pingStartRef.current = 0;
+        setLatency(nextRtt);
+        setRttSamples((current) => [...current.slice(-19), nextRtt]);
+        socket.emit("client_latency", { clientId, latency: nextRtt });
         return;
       }
 
-      if (payload.type === "net_event") {
-        setEvents((current) => [`${payload.code}: ${payload.detail}`, ...current].slice(0, 12));
+      if (payload.type === "event") {
+        setEvents((current) => [payload.message, ...current].slice(0, 10));
       }
     });
 
-    return () => {
-      socket.disconnect();
-    };
+    return () => socket.disconnect();
   }, [clientId]);
 
   useEffect(() => {
@@ -170,61 +86,27 @@ export default function App() {
       return;
     }
     const timer = window.setInterval(() => {
-      const currentSeq = seq;
-      pingTimersRef.current.set(currentSeq, Date.now());
-      queueMessage(
-        {
-          type: "client_ping",
-          clientId,
-          ts_local: Date.now(),
-          seq: currentSeq
-        },
-        { requiresAck: true }
-      );
+      pingStartRef.current = Date.now();
+      sendMessage("client_ping");
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [joined, seq, clientId]);
-
-  useEffect(() => {
-    const timer = window.setInterval(async () => {
-      try {
-        const response = await fetch(`${SERVER_URL}/metrics`);
-        const data = await response.json();
-        setServerMetrics(data);
-      } catch (error) {
-        setEvents((current) => [`metrics_error: ${error.message}`, ...current].slice(0, 12));
-      }
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, []);
+  }, [joined]);
 
   const inspectorRows = useMemo(
     () => [
       {
         clientId,
-        rtt: avgRtt,
-        jitter,
-        packetLoss: packetLossEstimate,
-        lastSeqSent: seq - 1,
-        lastSeqReceived,
-        retransmits
+        latency
       }
     ],
-    [clientId, avgRtt, jitter, packetLossEstimate, seq, lastSeqReceived, retransmits]
+    [clientId, latency]
   );
 
   function handleJoin() {
     if (!name.trim()) {
       return;
     }
-    queueMessage(
-      {
-        type: "join_quiz",
-        clientId,
-        name: name.trim()
-      },
-      { requiresAck: true }
-    );
+    sendMessage("join_quiz", { name: name.trim() });
     setJoined(true);
   }
 
@@ -232,16 +114,12 @@ export default function App() {
     if (!question) {
       return;
     }
-    queueMessage(
-      {
-        type: "answer",
-        clientId,
-        questionId: question.questionId,
-        answerId,
-        ts_local: Date.now()
-      },
-      { requiresAck: true }
-    );
+    sendMessage("answer", {
+      questionId: question.questionId,
+      answerId,
+      ts_local: Date.now()
+    });
+    setSubmissionSeq((current) => current + 1);
   }
 
   async function handleAdminLogin(password) {
@@ -258,13 +136,7 @@ export default function App() {
   }
 
   function sendAdminAction(action, payload) {
-    queueMessage({
-      type: "admin_action",
-      clientId,
-      action,
-      token: adminToken,
-      payload
-    });
+    sendMessage("admin_action", { action, token: adminToken, payload });
   }
 
   return (
@@ -274,10 +146,8 @@ export default function App() {
           <p className="eyebrow">Computer Networks Mini Project</p>
           <h1>Multi-Client Online Quiz System</h1>
           <p className="subtle">
-            WebSockets, application-layer reliability, latency simulation, and live ranking in one
-            visible network lab.
+            WebSockets, live quiz participation, admin-driven question flow, and a latency-aware leaderboard.
           </p>
-          <p className="mono">Last acked seq: {lastAckedSeq}</p>
         </div>
         <div className="join-card">
           <input
@@ -294,7 +164,7 @@ export default function App() {
 
       <main className="grid">
         <section className="panel">
-          <Quiz question={question} seq={seq - 1} clientId={clientId} onSubmit={handleSubmitAnswer} />
+          <Quiz question={question} seq={submissionSeq} clientId={clientId} onSubmit={handleSubmitAnswer} />
         </section>
 
         <section className="panel">
@@ -309,7 +179,6 @@ export default function App() {
             onStart={() => sendAdminAction("start_quiz")}
             onStop={() => sendAdminAction("stop_quiz")}
             onNext={() => sendAdminAction("next_question")}
-            onNetworkChange={(payload) => sendAdminAction("set_network", payload)}
             connectedClients={leaderboard}
           />
         </section>
@@ -320,14 +189,11 @@ export default function App() {
             rows={inspectorRows}
             messageLog={messageLog}
             rttSamples={rttSamples}
-            unackedSize={unackedSize}
             events={events}
-            serverMetrics={serverMetrics}
           />
         </section>
       </main>
     </div>
   );
 }
-
 

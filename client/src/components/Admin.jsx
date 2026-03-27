@@ -14,16 +14,10 @@ export default function Admin({
   onStart,
   onStop,
   onNext,
-  onNetworkChange,
   connectedClients
 }) {
   const [password, setPassword] = useState("admin123");
   const [question, setQuestion] = useState(initialQuestion);
-  const [network, setNetwork] = useState({
-    packetLossPercent: 0,
-    minDelayMs: 0,
-    maxDelayMs: 0
-  });
   const [error, setError] = useState("");
 
   async function handleLogin() {
@@ -104,47 +98,6 @@ export default function Admin({
           Add Question
         </button>
       </div>
-
-      <div className="stack top-gap">
-        <h3>Network Simulation</h3>
-        <label>
-          Packet Loss %
-          <input
-            type="number"
-            value={network.packetLossPercent}
-            onChange={(event) =>
-              setNetwork((current) => ({
-                ...current,
-                packetLossPercent: Number(event.target.value)
-              }))
-            }
-          />
-        </label>
-        <label>
-          Min Delay (ms)
-          <input
-            type="number"
-            value={network.minDelayMs}
-            onChange={(event) =>
-              setNetwork((current) => ({ ...current, minDelayMs: Number(event.target.value) }))
-            }
-          />
-        </label>
-        <label>
-          Max Delay (ms)
-          <input
-            type="number"
-            value={network.maxDelayMs}
-            onChange={(event) =>
-              setNetwork((current) => ({ ...current, maxDelayMs: Number(event.target.value) }))
-            }
-          />
-        </label>
-        <button onClick={() => onNetworkChange(network)} disabled={!token}>
-          Apply Network Settings
-        </button>
-      </div>
     </div>
   );
 }
-

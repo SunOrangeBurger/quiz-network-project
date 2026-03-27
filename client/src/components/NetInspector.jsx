@@ -12,20 +12,12 @@ import { Line } from "react-chartjs-2";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
-export default function NetInspector({
-  clientId,
-  rows,
-  messageLog,
-  rttSamples,
-  unackedSize,
-  events,
-  serverMetrics
-}) {
+export default function NetInspector({ clientId, rows, messageLog, rttSamples, events }) {
   const chartData = {
     labels: rttSamples.map((_, index) => `${index + 1}`),
     datasets: [
       {
-        label: "RTT (ms)",
+        label: "Latency (ms)",
         data: rttSamples,
         borderColor: "#f97316",
         backgroundColor: "rgba(249, 115, 22, 0.18)",
@@ -45,24 +37,14 @@ export default function NetInspector({
         <thead>
           <tr>
             <th>clientId</th>
-            <th>RTT</th>
-            <th>jitter</th>
-            <th>packetLoss</th>
-            <th>lastSeqSent</th>
-            <th>lastSeqReceived</th>
-            <th>retransmits</th>
+            <th>Latency (ms)</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.clientId}>
               <td>{row.clientId}</td>
-              <td>{row.rtt}</td>
-              <td>{row.jitter}</td>
-              <td>{row.packetLoss}</td>
-              <td>{row.lastSeqSent}</td>
-              <td>{row.lastSeqReceived}</td>
-              <td>{row.retransmits}</td>
+              <td>{row.latency}</td>
             </tr>
           ))}
         </tbody>
@@ -86,16 +68,10 @@ export default function NetInspector({
 
         <div>
           <h3>Status</h3>
-          <p>Unacked queue size: {unackedSize}</p>
-          {serverMetrics ? (
-            <div className="meta-box">
-              <p>Server sockets: {serverMetrics.socketsCount}</p>
-              <p>Messages/sec: {serverMetrics.messagesPerSecond}</p>
-              <p>Drop rate: {serverMetrics.dropRate}</p>
-              <p>Retransmits: {serverMetrics.retransmits}</p>
-              <p>Avg RTT: {serverMetrics.avgRTT_ms}</p>
-            </div>
-          ) : null}
+          <div className="meta-box">
+            <p>Recent latency samples: {rttSamples.length}</p>
+            <p>Current client: {clientId}</p>
+          </div>
           <h3>Events</h3>
           <ul className="event-list">
             {events.map((event, index) => (
@@ -107,4 +83,3 @@ export default function NetInspector({
     </div>
   );
 }
-

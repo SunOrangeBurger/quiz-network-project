@@ -1,26 +1,11 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 
-function createRoutes({ metrics, getSocketsCount, getLeaderboard, getNetConfig, adminPassword, jwtSecret }) {
+function createRoutes({ adminPassword, jwtSecret }) {
   const router = express.Router();
 
   router.get("/health", (req, res) => {
-    res.json({
-      ok: true,
-      timestamp: Date.now(),
-      leaderboardReady: true
-    });
-  });
-
-  router.get("/metrics", async (req, res) => {
-    const leaderboard = await getLeaderboard();
-    res.json(
-      metrics.snapshot({
-        socketsCount: getSocketsCount(),
-        dropConfig: getNetConfig(),
-        leaderboardSize: leaderboard.length
-      })
-    );
+    res.json({ ok: true, timestamp: Date.now() });
   });
 
   router.post("/api/admin/login", (req, res) => {
