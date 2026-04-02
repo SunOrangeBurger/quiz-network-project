@@ -1,10 +1,10 @@
 import React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { io } from "socket.io-client";
-import Quiz from "./components/Quiz";
-import Admin from "./components/Admin";
-import Leaderboard from "./components/Leaderboard";
-import NetInspector from "./components/NetInspector";
+import UserPage from "./pages/UserPage";
+import AdminPage from "./pages/AdminPage";
+import NotFound from "./pages/NotFound";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:4000";
 
@@ -18,29 +18,18 @@ export default function App() {
   const [clientId] = useState(() => randomId("client"));
   const [leaderboard, setLeaderboard] = useState([]);
   const [question, setQuestion] = useState(null);
-  const [messageLog, setMessageLog] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [submissionSeq, setSubmissionSeq] = useState(1);
-  const [rttSamples, setRttSamples] = useState([]);
-  const [latency, setLatency] = useState(0);
   const [adminToken, setAdminToken] = useState("");
+  const [disqualified, setDisqualified] = useState(false);
+  const [questionTimer, setQuestionTimer] = useState(20);
+  const [questionList, setQuestionList] = useState([]);
+  const [quizEnded, setQuizEnded] = useState(false);
   const socketRef = useRef(null);
   const pingStartRef = useRef(0);
 
-  function logLine(direction, payload) {
-    setMessageLog((current) =>
-      [{ direction, payload, ts: new Date().toLocaleTimeString() }, ...current].slice(0, 20)
-    );
-  }
-
   function sendMessage(type, payload = {}) {
     const socket = socketRef.current;
-    if (!socket) {
-      return;
-    }
-    const message = { type, clientId, ...payload };
-    logLine("send", message);
-    socket.emit("client_message", message);
+    if (!socket) return;
+    socket.emit("client_message", { type, clientId, ...payload });
   }
 
   useEffect(() => {
@@ -48,12 +37,10 @@ export default function App() {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      setEvents((current) => [`Connected to ${SERVER_URL}`, ...current].slice(0, 10));
+      console.log("Connected to server");
     });
 
     socket.on("server_message", (payload) => {
-      logLine("recv", payload);
-
       if (payload.type === "leaderboard") {
         setLeaderboard(payload.entries || []);
         return;
@@ -61,20 +48,39 @@ export default function App() {
 
       if (payload.type === "question") {
         setQuestion(payload);
+        setQuizEnded(false);
+        if (payload.timer) {
+          setQuestionTimer(payload.timer);
+        }
+        return;
+      }
+
+      if (payload.type === "disqualified") {
+        setDisqualified(true);
+        return;
+      }
+
+      if (payload.type === "quiz_ended") {
+        setQuestion(null);
+        setQuizEnded(true);
+        return;
+      }
+
+      if (payload.type === "timer_updated") {
+        setQuestionTimer(payload.timer);
+        return;
+      }
+
+      if (payload.type === "question_list") {
+        setQuestionList(payload.questions || []);
         return;
       }
 
       if (payload.type === "server_pong" && pingStartRef.current) {
-        const nextRtt = Date.now() - pingStartRef.current;
+        const rtt = Date.now() - pingStartRef.current;
         pingStartRef.current = 0;
-        setLatency(nextRtt);
-        setRttSamples((current) => [...current.slice(-19), nextRtt]);
-        socket.emit("client_latency", { clientId, latency: nextRtt });
+        socket.emit("client_latency", { clientId, latency: rtt });
         return;
-      }
-
-      if (payload.type === "event") {
-        setEvents((current) => [payload.message, ...current].slice(0, 10));
       }
     });
 
@@ -82,9 +88,7 @@ export default function App() {
   }, [clientId]);
 
   useEffect(() => {
-    if (!joined) {
-      return;
-    }
+    if (!joined) return;
     const timer = window.setInterval(() => {
       pingStartRef.current = Date.now();
       sendMessage("client_ping");
@@ -92,34 +96,21 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [joined]);
 
-  const inspectorRows = useMemo(
-    () => [
-      {
-        clientId,
-        latency
-      }
-    ],
-    [clientId, latency]
-  );
-
-  function handleJoin() {
-    if (!name.trim()) {
-      return;
-    }
-    sendMessage("join_quiz", { name: name.trim() });
+  function handleJoin(userName) {
+    if (!userName.trim()) return;
+    setName(userName.trim());
+    sendMessage("join_quiz", { name: userName.trim() });
     setJoined(true);
+    setQuizEnded(false);
   }
 
   function handleSubmitAnswer(answerId) {
-    if (!question) {
-      return;
-    }
+    if (!question) return;
     sendMessage("answer", {
       questionId: question.questionId,
       answerId,
       ts_local: Date.now()
     });
-    setSubmissionSeq((current) => current + 1);
   }
 
   async function handleAdminLogin(password) {
@@ -139,61 +130,69 @@ export default function App() {
     sendMessage("admin_action", { action, token: adminToken, payload });
   }
 
+  function handleDisqualify(clientId) {
+    sendAdminAction("disqualify_user", { clientId });
+  }
+
+  function handleSetTimer(timer) {
+    sendAdminAction("set_timer", { timer });
+  }
+
+  function handleUpdateQuestion(questionData) {
+    sendAdminAction("update_question", {
+      questionId: questionData.id,
+      text: questionData.text,
+      choices: questionData.choices,
+      correctAnswerId: questionData.correctAnswerId
+    });
+  }
+
+  function handleDeleteQuestion(questionId) {
+    sendAdminAction("delete_question", { questionId });
+  }
+
   return (
-    <div className="app-shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Computer Networks Mini Project</p>
-          <h1>Multi-Client Online Quiz System</h1>
-          <p className="subtle">
-            WebSockets, live quiz participation, admin-driven question flow, and a latency-aware leaderboard.
-          </p>
-        </div>
-        <div className="join-card">
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Enter display name"
-          />
-          <button onClick={handleJoin} disabled={joined}>
-            {joined ? "Joined" : "Join Quiz"}
-          </button>
-          <p className="mono">Client ID: {clientId}</p>
-        </div>
-      </header>
-
-      <main className="grid">
-        <section className="panel">
-          <Quiz question={question} seq={submissionSeq} clientId={clientId} onSubmit={handleSubmitAnswer} />
-        </section>
-
-        <section className="panel">
-          <Leaderboard entries={leaderboard} />
-        </section>
-
-        <section className="panel">
-          <Admin
-            token={adminToken}
-            onLogin={handleAdminLogin}
-            onCreateQuestion={(payload) => sendAdminAction("create_question", payload)}
-            onStart={() => sendAdminAction("start_quiz")}
-            onStop={() => sendAdminAction("stop_quiz")}
-            onNext={() => sendAdminAction("next_question")}
-            connectedClients={leaderboard}
-          />
-        </section>
-
-        <section className="panel wide">
-          <NetInspector
-            clientId={clientId}
-            rows={inspectorRows}
-            messageLog={messageLog}
-            rttSamples={rttSamples}
-            events={events}
-          />
-        </section>
-      </main>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <UserPage
+              name={name}
+              clientId={clientId}
+              question={question}
+              onSubmit={handleSubmitAnswer}
+              joined={joined}
+              onJoin={handleJoin}
+              disqualified={disqualified}
+              questionTimer={questionTimer}
+              quizEnded={quizEnded}
+              leaderboard={leaderboard}
+            />
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <AdminPage
+              token={adminToken}
+              onLogin={handleAdminLogin}
+              onCreateQuestion={(payload) => sendAdminAction("create_question", payload)}
+              onStart={() => sendAdminAction("start_quiz")}
+              onStop={() => sendAdminAction("stop_quiz")}
+              onNext={() => sendAdminAction("next_question")}
+              leaderboard={leaderboard}
+              onDisqualify={handleDisqualify}
+              onSetTimer={handleSetTimer}
+              onUpdateQuestion={handleUpdateQuestion}
+              onDeleteQuestion={handleDeleteQuestion}
+              questionList={questionList}
+            />
+          }
+        />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

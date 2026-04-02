@@ -91,6 +91,21 @@ async function initDb() {
         text: "What does RTT stand for?",
         choices: ["Real-Time Transfer", "Round Trip Time", "Route Table Trace", "Remote Tunnel Timing"],
         correctAnswerId: "1"
+      },
+      {
+        text: "Which protocol is connection-oriented?",
+        choices: ["UDP", "TCP", "ICMP", "ARP"],
+        correctAnswerId: "1"
+      },
+      {
+        text: "What is the maximum value of TTL in IP packets?",
+        choices: ["128", "255", "512", "1024"],
+        correctAnswerId: "1"
+      },
+      {
+        text: "Which layer handles MAC addresses?",
+        choices: ["Physical", "Data Link", "Network", "Transport"],
+        correctAnswerId: "1"
       }
     ];
 
@@ -158,11 +173,24 @@ async function saveSubmission({ clientId, questionId, answerId, isCorrect, seq, 
   );
 }
 
+async function updateQuestion(questionId, { text, choices, correctAnswerId }) {
+  await run(
+    "UPDATE questions SET text = ?, choices_json = ?, correct_answer_id = ? WHERE id = ?",
+    [text, JSON.stringify(choices), String(correctAnswerId), questionId]
+  );
+}
+
+async function deleteQuestion(questionId) {
+  await run("DELETE FROM questions WHERE id = ?", [questionId]);
+}
+
 module.exports = {
   initDb,
   upsertParticipant,
   updateParticipantLatency,
   listQuestions,
   createQuestion,
+  updateQuestion,
+  deleteQuestion,
   saveSubmission
 };

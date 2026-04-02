@@ -4,10 +4,14 @@ const db = require("./db");
 function createSocketServer(io, { jwtSecret, adminPassword }) {
   const participants = new Map();
   const answered = new Set();
+  const disqualified = new Set();
   const state = {
     started: false,
     currentQuestionIndex: -1,
-    quizQuestions: []
+    quizQuestions: [],
+    questionTimer: 20,
+    answersForCurrentQuestion: 0,
+    totalActiveParticipants: 0
   };
 
   function getParticipant(clientId) {
@@ -17,7 +21,8 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
         name: clientId,
         score: 0,
         latency: 0,
-        socketId: null
+        socketId: null,
+        disqualified: false
       });
     }
     return participants.get(clientId);
@@ -29,12 +34,14 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
 
   function leaderboardEntries() {
     return Array.from(participants.values())
+      .filter((p) => !p.disqualified)
       .sort((a, b) => b.score - a.score)
       .map((participant) => ({
         clientId: participant.clientId,
         name: participant.name,
         score: participant.score,
         latency: participant.latency,
+        disqualified: participant.disqualified,
         lastUpdateTs: Date.now()
       }));
   }
@@ -56,12 +63,37 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
     if (!question) {
       return;
     }
+    
+    // Reset answer counter for new question
+    state.answersForCurrentQuestion = 0;
+    state.totalActiveParticipants = Array.from(participants.values()).filter(p => !p.disqualified).length;
+    
     broadcast({
       type: "question",
       questionId: question.id,
       text: question.text,
-      choices: question.choices
+      choices: question.choices,
+      timer: state.questionTimer
     });
+  }
+
+  function autoAdvanceQuestion() {
+    if (!state.started) return;
+    
+    // Check if all active participants have answered
+    if (state.answersForCurrentQuestion >= state.totalActiveParticipants && state.totalActiveParticipants > 0) {
+      // Move to next question
+      if (state.currentQuestionIndex + 1 < state.quizQuestions.length) {
+        state.currentQuestionIndex += 1;
+        broadcastQuestion();
+        sendEvent("Auto-advancing to next question");
+      } else {
+        // Quiz finished
+        state.started = false;
+        broadcast({ type: "quiz_ended" });
+        sendEvent("Quiz completed - all questions answered");
+      }
+    }
   }
 
   function sendEvent(message) {
@@ -99,13 +131,19 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
       return;
     }
 
+    const participant = getParticipant(clientId);
+    
+    // Check if participant is disqualified
+    if (participant.disqualified) {
+      return;
+    }
+
     const key = `${clientId}:${questionId}`;
     if (answered.has(key)) {
       return;
     }
     answered.add(key);
 
-    const participant = getParticipant(clientId);
     const question = state.quizQuestions.find((item) => item.id === questionId);
     if (!question) {
       return;
@@ -126,7 +164,14 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
     });
 
     participants.set(clientId, participant);
+    
+    // Increment answer counter
+    state.answersForCurrentQuestion += 1;
+    
     broadcastLeaderboard();
+    
+    // Auto-advance if all participants have answered
+    autoAdvanceQuestion();
   }
 
   async function handleAdminAction(message) {
@@ -138,6 +183,49 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
       const question = await db.createQuestion(message.payload);
       state.quizQuestions.push(question);
       sendEvent(`Question ${question.id} created`);
+      broadcastQuestionList();
+      return;
+    }
+
+    if (message.action === "update_question") {
+      const { questionId, text, choices, correctAnswerId } = message.payload;
+      await db.updateQuestion(questionId, { text, choices, correctAnswerId });
+      await hydrateQuestions();
+      sendEvent(`Question ${questionId} updated`);
+      broadcastQuestionList();
+      return;
+    }
+
+    if (message.action === "delete_question") {
+      const { questionId } = message.payload;
+      await db.deleteQuestion(questionId);
+      await hydrateQuestions();
+      sendEvent(`Question ${questionId} deleted`);
+      broadcastQuestionList();
+      return;
+    }
+
+    if (message.action === "disqualify_user") {
+      const { clientId } = message.payload;
+      const participant = getParticipant(clientId);
+      participant.disqualified = true;
+      participants.set(clientId, participant);
+      broadcastLeaderboard();
+      sendEvent(`${participant.name} has been disqualified`);
+      
+      // Notify the disqualified user
+      const socket = Array.from(io.sockets.sockets.values()).find(s => s.data.clientId === clientId);
+      if (socket) {
+        socket.emit("server_message", { type: "disqualified" });
+      }
+      return;
+    }
+
+    if (message.action === "set_timer") {
+      const { timer } = message.payload;
+      state.questionTimer = Math.max(5, Math.min(120, timer)); // Between 5 and 120 seconds
+      sendEvent(`Timer set to ${state.questionTimer} seconds`);
+      broadcast({ type: "timer_updated", timer: state.questionTimer });
       return;
     }
 
@@ -163,11 +251,35 @@ function createSocketServer(io, { jwtSecret, adminPassword }) {
 
     if (message.action === "stop_quiz") {
       state.started = false;
+      broadcast({ type: "quiz_ended" });
       sendEvent("Quiz stopped");
     }
   }
 
+  function broadcastQuestionList() {
+    broadcast({
+      type: "question_list",
+      questions: state.quizQuestions.map(q => ({
+        id: q.id,
+        text: q.text,
+        choices: q.choices,
+        correctAnswerId: q.correctAnswerId
+      }))
+    });
+  }
+
   io.on("connection", (socket) => {
+    // Send current question list to newly connected admin
+    socket.emit("server_message", {
+      type: "question_list",
+      questions: state.quizQuestions.map(q => ({
+        id: q.id,
+        text: q.text,
+        choices: q.choices,
+        correctAnswerId: q.correctAnswerId
+      }))
+    });
+
     socket.on("client_message", async (message) => {
       if (!message?.type) {
         return;

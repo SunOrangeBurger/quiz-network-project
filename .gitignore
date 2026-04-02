@@ -43,3 +43,6 @@ loadtest-results/
 # Misc
 *.pid
 *.seed
+
+# Development documentation (internal use only)
+DEVELOPMENT_NOTES.md

@@ -7,7 +7,9 @@ Version 1 of a computer networks mini-project that turns a quiz app into a visib
 The repository is split into three packages:
 
 - `server/`: Express + Socket.IO server, quiz coordination, metrics, reliability acknowledgements, SQLite persistence, Redis leaderboard fallback.
-- `client/`: React + Vite frontend with quiz screen, admin panel, real-time leaderboard, and a Network Inspector with RTT charts and message logs.
+- `client/`: React + Vite frontend with separate user and admin interfaces:
+  - **User Page** (`/`): Clean quiz interface showing only timer, questions, and answer options
+  - **Admin Page** (`/admin`): Dashboard with live leaderboard, per-user latency monitoring, and quiz controls
 - `loadtest/`: Simulated Socket.IO clients and a small stress harness for throughput and RTT checks.
 
 ### Architecture diagram explanation
@@ -28,6 +30,28 @@ The repository is split into three packages:
 - Packet loss and latency simulation with visible retransmissions and delayed leaderboard updates
 - Server metrics for sockets, throughput, drops, retransmits, and RTT
 
+## User Interface
+
+### User Page (`/`)
+The user interface provides a clean, distraction-free quiz experience:
+- Simple join screen with name input
+- Timer display showing remaining time for each question
+- Question text and multiple choice options
+- Submit button with visual feedback
+- No leaderboard or admin controls visible
+
+### Admin Dashboard (`/admin`)
+The admin interface provides comprehensive quiz management and monitoring:
+- Authentication required (default password: `admin123`)
+- Live leaderboard with real-time score updates
+- Per-user latency monitoring with color-coded indicators:
+  - Green: < 100ms (good)
+  - Yellow: 100-250ms (warning)
+  - Red: > 250ms (poor)
+- Quiz control buttons (Start, Next Question, Stop)
+- Connected clients list
+- Question creation interface
+
 ## Repository Layout
 
 ```text
@@ -37,21 +61,21 @@ The repository is split into three packages:
 |-- client/
 |   |-- package.json
 |   |-- index.html
+|   |-- vite.config.js
 |   `-- src/
 |       |-- main.jsx
 |       |-- App.jsx
 |       |-- styles.css
+|       |-- pages/
+|       |   |-- UserPage.jsx
+|       |   `-- AdminPage.jsx
 |       `-- components/
-|           |-- Quiz.jsx
 |           |-- Admin.jsx
-|           |-- Leaderboard.jsx
-|           `-- NetInspector.jsx
+|           `-- Leaderboard.jsx
 |-- server/
 |   |-- package.json
 |   |-- index.js
 |   |-- socket.js
-|   |-- metrics.js
-|   |-- net_sim.js
 |   |-- routes.js
 |   `-- db.js
 `-- loadtest/
@@ -87,6 +111,11 @@ cd client
 npm install
 npm run dev
 ```
+
+### Access the application
+
+- **User Interface**: http://localhost:5173/
+- **Admin Dashboard**: http://localhost:5173/admin
 
 ### Production-style start
 
